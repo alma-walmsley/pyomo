@@ -853,7 +853,44 @@ class TestSequentialDecomposition(unittest.TestCase):
     def test_fixed_disjuncts(self):
         self._test_disjuncts(True)
         self._test_disjuncts(False)
+    
+    def test_skip_fixing_variables(self):
+        # a simple test with a constraint on the tear port
+        m = ConcreteModel()
+        m.unit = Block()
+        m.unit.flow_in = Var(initialize=0)
+        m.unit.flow_out = Var(initialize=0)
 
+        @m.unit.Port()
+        def inlet(b):
+            return dict(flow=b.flow_in)
+
+        @m.unit.Port()
+        def outlet(b):
+            return dict(flow=b.flow_out)
+        
+        @m.unit.Constraint()
+        def flow_eqn(b):
+            return b.outlet.flow == b.inlet.flow + (2 - b.inlet.flow) / 2
+        
+        def initialize_unit(b):
+            from pyomo.util.calc_var_value import calculate_variable_from_constraint
+            calculate_variable_from_constraint(b.outlet.flow, b.flow_eqn)
+            print("flow_out", value(b.outlet.flow))
+        
+        @m.Arc(directed=True)
+        def arc(m):
+            return (m.unit.outlet, m.unit.inlet)
+
+        TransformationFactory("network.expand_arcs").apply_to(m)
+
+        seq = SequentialDecomposition()
+        seq.set_guesses_for(m.unit.inlet, {"flow": 1})
+        seq.set_tear_set([m.arc])
+        seq.options["tol"] = 1e-3
+        seq.run(m, initialize_unit)
+
+        self.assertAlmostEqual(value(m.unit.outlet.flow), 2, places=2)
 
 if __name__ == "__main__":
     unittest.main()
